@@ -97,6 +97,9 @@ locals {
       ]
     ]) : "${binding.role}-${binding.member}" => binding
   }
+
+  mlops_sa = var.prefix != null ? "${var.prefix}-sa-mlops": "sa-mlops"
+  github_sa = var.prefix != null ? "${var.prefix}-sa-github": "sa-github"
 }
 
 module "gcs-bucket" {
@@ -279,7 +282,7 @@ module "project" {
 
 module "service-account-mlops" {
   source     = "../../../modules/iam-service-account"
-  name       = "${var.prefix}-sa-mlops"
+  name       = local.mlops_sa
   project_id = module.project.project_id
 }
 
