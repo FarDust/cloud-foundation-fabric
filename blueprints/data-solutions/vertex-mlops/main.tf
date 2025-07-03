@@ -115,7 +115,7 @@ module "gcs-bucket" {
   force_destroy  = !var.deletion_protection
 }
 
-# Default bucket for Cloud Build to prevent error: "'us' violates constraint ‘gcp.resourceLocations’"
+# Default bucket for Cloud Build to prevent error: "'us' violates constraint 'gcp.resourceLocations'"
 # https://stackoverflow.com/questions/53206667/cloud-build-fails-with-resource-location-constraint
 module "gcs-bucket-cloudbuild" {
   source         = "../../../modules/gcs"
@@ -200,8 +200,12 @@ module "project" {
   prefix            = var.prefix
   iam_by_principals = local.iam_principals
   iam_bindings_additive = {
-    # we manage aiplatform.user additively since it is also granted to
-    # the vertex-shtune service agent by the project module
+    # Move logging.logWriter to additive to avoid removing existing members
+    logging-logwriter-notebook = {
+      member = module.service-account-notebook.iam_email
+      role   = "roles/logging.logWriter"
+    }
+    # Manage aiplatform.user additively to avoid authoritative issues
     aiplatform-user-mlops = {
       member = module.service-account-mlops.iam_email
       role   = "roles/aiplatform.user"
@@ -209,6 +213,28 @@ module "project" {
     aiplatform-user-notebook = {
       member = module.service-account-notebook.iam_email
       role   = "roles/aiplatform.user"
+    }
+    # Move monitoring.metricWriter to additive to avoid removing existing members
+    monitoring-metricwriter-mlops = {
+      member = module.service-account-mlops.iam_email
+      role   = "roles/monitoring.metricWriter"
+    }
+    monitoring-metricwriter-notebook = {
+      member = module.service-account-notebook.iam_email
+      role   = "roles/monitoring.metricWriter"
+    }
+    # Move serviceusage.serviceUsageConsumer to additive to avoid removing existing members
+    serviceusage-consumer-mlops = {
+      member = module.service-account-mlops.iam_email
+      role   = "roles/serviceusage.serviceUsageConsumer"
+    }
+    serviceusage-consumer-github = {
+      member = module.service-account-github.iam_email
+      role   = "roles/serviceusage.serviceUsageConsumer"
+    }
+    serviceusage-consumer-notebook = {
+      member = module.service-account-notebook.iam_email
+      role   = "roles/serviceusage.serviceUsageConsumer"
     }
   }
   iam = {
@@ -237,19 +263,7 @@ module "project" {
       module.service-account-github.iam_email,
       module.project.service_agents.cloudbuild.iam_email
     ]
-    "roles/logging.logWriter" = [
-      module.service-account-notebook.iam_email,
-    ]
-    "roles/monitoring.metricWriter" = [
-      module.service-account-mlops.iam_email,
-      module.service-account-notebook.iam_email,
-    ]
     "roles/run.invoker" = [module.service-account-mlops.iam_email]
-    "roles/serviceusage.serviceUsageConsumer" = [
-      module.service-account-mlops.iam_email,
-      module.service-account-github.iam_email,
-      module.service-account-notebook.iam_email,
-    ]
     "roles/storage.admin" = [
       module.service-account-mlops.iam_email,
       module.service-account-github.iam_email,
