@@ -30,6 +30,7 @@ variable "backend_service_config" {
     }))
     locality_lb_policy = optional(string)
     log_sample_rate    = optional(number)
+    name               = optional(string)
     port_name          = optional(string)
     protocol           = optional(string, "UNSPECIFIED")
     session_affinity   = optional(string)
@@ -85,7 +86,8 @@ variable "forwarding_rules_config" {
   type = map(object({
     address     = optional(string)
     description = optional(string)
-    ip_version  = optional(string)
+    ipv6        = optional(bool, false)
+    name        = optional(string)
     ports       = optional(list(string), null)
     protocol    = optional(string, "TCP")
     subnetwork  = optional(string) # Required for IPv6
@@ -119,6 +121,7 @@ variable "health_check_config" {
     description         = optional(string, "Terraform managed.")
     enable_logging      = optional(bool, false)
     healthy_threshold   = optional(number)
+    name                = optional(string)
     timeout_sec         = optional(number)
     unhealthy_threshold = optional(number)
     grpc = optional(object({
@@ -203,17 +206,6 @@ variable "name" {
 variable "project_id" {
   description = "Project id where resources will be created."
   type        = string
-}
-
-variable "protocol" {
-  description = "IP protocol used, defaults to TCP. UDP or L3_DEFAULT can also be used."
-  type        = string
-  default     = "TCP"
-  nullable    = false
-  validation {
-    condition     = contains(["L3_DEFAULT", "TCP", "UDP"], var.protocol)
-    error_message = "Allowed values are 'TCP', 'UDP', 'L3_DEFAULT'."
-  }
 }
 
 variable "region" {

@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Google LLC
+ * Copyright 2025 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,19 +14,21 @@
  * limitations under the License.
  */
 
-# tfdoc:file:description IAM bindings, roles and audit logging resources.
+# tfdoc:file:description IAM bindings.
 
 locals {
+  _custom_roles_path = pathexpand(coalesce(var.factories_config.custom_roles, "-"))
   _custom_roles = {
-    for f in try(fileset(var.factories_config.custom_roles, "*.yaml"), []) :
+    for f in try(fileset(local._custom_roles_path, "*.yaml"), []) :
     replace(f, ".yaml", "") => yamldecode(
-      file("${var.factories_config.custom_roles}/${f}")
+      file("${local._custom_roles_path}/${f}")
     )
   }
-  _group_iam_roles = distinct(flatten(values(var.group_iam)))
-  _group_iam = {
-    for r in local._group_iam_roles : r => [
-      for k, v in var.group_iam : "group:${k}" if try(index(v, r), null) != null
+  _iam_principal_roles = distinct(flatten(values(var.iam_by_principals)))
+  _iam_principals = {
+    for r in local._iam_principal_roles : r => [
+      for k, v in var.iam_by_principals :
+      k if try(index(v, r), null) != null
     ]
   }
   custom_roles = merge(
@@ -44,12 +46,25 @@ locals {
     }
   )
   iam = {
-    for role in distinct(concat(keys(var.iam), keys(local._group_iam))) :
+    for role in distinct(concat(keys(var.iam), keys(local._iam_principals))) :
     role => concat(
       try(var.iam[role], []),
-      try(local._group_iam[role], [])
+      try(local._iam_principals[role], [])
     )
   }
+  iam_bindings_additive = merge(
+    var.iam_bindings_additive,
+    [
+      for principal, roles in var.iam_by_principals_additive : {
+        for role in roles :
+        "iam-bpa:${principal}-${role}" => {
+          member    = principal
+          role      = role
+          condition = null
+        }
+      }
+    ]...
+  )
 }
 
 # we use a different key for custom roles to allow referring to the role alias
@@ -100,7 +115,7 @@ resource "google_organization_iam_binding" "bindings" {
 }
 
 resource "google_organization_iam_member" "bindings" {
-  for_each = var.iam_bindings_additive
+  for_each = local.iam_bindings_additive
   org_id   = local.organization_id_numeric
   role     = each.value.role
   member   = each.value.member

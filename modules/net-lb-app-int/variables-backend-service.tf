@@ -29,6 +29,7 @@ variable "backend_service_configs" {
     protocol                        = optional(string)
     session_affinity                = optional(string)
     timeout_sec                     = optional(number)
+    security_policy                 = optional(string)
     backends = list(object({
       group           = string
       balancing_mode  = optional(string, "UTILIZATION")
@@ -71,8 +72,8 @@ variable "backend_service_configs" {
       drop_traffic_if_unhealthy = optional(bool)
     }))
     iap_config = optional(object({
-      oauth2_client_id            = string
-      oauth2_client_secret        = string
+      oauth2_client_id            = optional(string)
+      oauth2_client_secret        = optional(string)
       oauth2_client_secret_sha256 = optional(string)
     }))
     outlier_detection = optional(object({
@@ -114,7 +115,7 @@ variable "backend_service_configs" {
       for backend_service in values(var.backend_service_configs) : contains(
         [
           "NONE", "CLIENT_IP", "CLIENT_IP_NO_DESTINATION",
-          "CLIENT_IP_PORT_PROTO", "CLIENT_IP_PROTO"
+          "CLIENT_IP_PORT_PROTO", "CLIENT_IP_PROTO", "GENERATED_COOKIE", "HEADER_FIELD", "HTTP_COOKIE"
         ],
         coalesce(backend_service.session_affinity, "NONE")
       )

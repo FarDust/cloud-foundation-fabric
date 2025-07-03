@@ -1,5 +1,5 @@
 /**
- * Copyright 2023 Google LLC
+ * Copyright 2024 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,8 +31,15 @@ variable "gke_version" {
   default     = null
 }
 
-variable "labels" {
+variable "k8s_labels" {
   description = "Kubernetes labels applied to each node."
+  type        = map(string)
+  default     = {}
+  nullable    = false
+}
+
+variable "labels" {
+  description = "The resource labels to be applied each node (vm)."
   type        = map(string)
   default     = {}
   nullable    = false
@@ -55,12 +62,36 @@ variable "name" {
   default     = null
 }
 
+variable "network_config" {
+  description = "Network configuration."
+  type = object({
+    enable_private_nodes = optional(bool)
+    pod_range = optional(object({
+      cidr   = optional(string)
+      create = optional(bool, false)
+      name   = optional(string)
+    }), {})
+    additional_node_network_configs = optional(list(object({
+      network    = string
+      subnetwork = string
+    })), [])
+    additional_pod_network_configs = optional(list(object({
+      subnetwork          = string
+      secondary_pod_range = string
+      max_pods_per_node   = string
+    })), [])
+    total_egress_bandwidth_tier        = optional(string)
+    pod_cidr_overprovisioning_disabled = optional(bool, false)
+  })
+  default = null
+}
+
 variable "node_config" {
   description = "Node-level configuration."
   type = object({
     boot_disk_kms_key   = optional(string)
     disk_size_gb        = optional(number)
-    disk_type           = optional(string)
+    disk_type           = optional(string, "pd-balanced")
     ephemeral_ssd_count = optional(number)
     gcfs                = optional(bool, false)
     guest_accelerator = optional(object({
@@ -98,9 +129,8 @@ variable "node_config" {
     spot                          = optional(bool)
     workload_metadata_config_mode = optional(string)
   })
-  default = {
-    disk_type = "pd-balanced"
-  }
+  default  = {}
+  nullable = false
   validation {
     condition = (
       alltrue([
@@ -111,6 +141,13 @@ variable "node_config" {
       ])
     )
     error_message = "Invalid GPU driver version."
+  }
+  validation {
+    condition = contains(
+      ["GCE_METADATA", "GKE_METADATA", "null"],
+      coalesce(var.node_config.workload_metadata_config_mode, "null")
+    )
+    error_message = "node_config.workload_metadata_config_mode must be GCE_METADATA or GKE_METADATA."
   }
 }
 
@@ -145,24 +182,25 @@ variable "nodepool_config" {
       auto_repair  = optional(bool)
       auto_upgrade = optional(bool)
     }))
-    # placement_policy = optional(bool)
+    placement_policy = optional(object({
+      type         = string
+      policy_name  = optional(string)
+      tpu_topology = optional(string)
+    }))
+    queued_provisioning = optional(bool, false)
     upgrade_settings = optional(object({
       max_surge       = number
       max_unavailable = number
+      strategy        = optional(string)
+      blue_green_settings = optional(object({
+        node_pool_soak_duration = optional(string)
+        standard_rollout_policy = optional(object({
+          batch_percentage    = optional(number)
+          batch_node_count    = optional(number)
+          batch_soak_duration = optional(string)
+        }))
+      }))
     }))
-  })
-  default = null
-}
-
-variable "pod_range" {
-  description = "Pod secondary range configuration."
-  type = object({
-    secondary_pod_range = object({
-      name                 = string
-      cidr                 = optional(string)
-      create               = optional(bool)
-      enable_private_nodes = optional(bool)
-    })
   })
   default = null
 }
@@ -188,6 +226,7 @@ variable "service_account" {
     create       = optional(bool, false)
     email        = optional(string)
     oauth_scopes = optional(list(string))
+    display_name = optional(string)
   })
   default  = {}
   nullable = false

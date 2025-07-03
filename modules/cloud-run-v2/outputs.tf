@@ -1,5 +1,5 @@
 /**
- * Copyright 2023 Google LLC
+ * Copyright 2025 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,13 +15,36 @@
  */
 
 output "id" {
-  description = "Fully qualified service id."
-  value       = google_cloud_run_v2_service.service.id
+  description = "Fully qualified job or service id."
+  value       = local.service.id
+}
+
+output "invoke_command" {
+  description = "Command to invoke Cloud Run Service / submit job."
+  value = (
+    var.create_job ? <<-EOT
+    gcloud run jobs execute \
+      --project ${var.project_id} \
+      --region ${var.region} \
+      --wait ${local.service.name} \
+      --args=
+  EOT
+    : <<-EOT
+    curl -H "Authorization: bearer $(gcloud auth print-identity-token)" \
+        ${local.service.uri} \
+        -X POST -d 'data'
+  EOT
+  )
+}
+
+output "job" {
+  description = "Cloud Run Job."
+  value       = var.create_job ? local.service : null
 }
 
 output "service" {
-  description = "Cloud Run service."
-  value       = google_cloud_run_v2_service.service
+  description = "Cloud Run Service."
+  value       = var.create_job ? null : local.service
 }
 
 output "service_account" {
@@ -44,10 +67,15 @@ output "service_account_iam_email" {
 
 output "service_name" {
   description = "Cloud Run service name."
-  value       = google_cloud_run_v2_service.service.name
+  value       = var.create_job ? null : local.service.name
+}
+
+output "service_uri" {
+  description = "Main URI in which the service is serving traffic."
+  value       = var.create_job ? null : local.service.uri
 }
 
 output "vpc_connector" {
   description = "VPC connector resource if created."
-  value       = try(google_vpc_access_connector.connector.0.id, null)
+  value       = try(google_vpc_access_connector.connector[0].id, null)
 }

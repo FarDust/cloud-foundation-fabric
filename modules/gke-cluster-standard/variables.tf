@@ -1,5 +1,5 @@
 /**
- * Copyright 2023 Google LLC
+ * Copyright 2025 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,34 @@
  * limitations under the License.
  */
 
+variable "access_config" {
+  description = "Control plane endpoint and nodes access configurations."
+  type = object({
+    dns_access = optional(bool, true)
+    ip_access = optional(object({
+      authorized_ranges                              = optional(map(string))
+      disable_public_endpoint                        = optional(bool)
+      gcp_public_cidrs_access_enabled                = optional(bool)
+      private_endpoint_authorized_ranges_enforcement = optional(bool)
+      private_endpoint_config = optional(object({
+        endpoint_subnetwork = optional(string)
+        global_access       = optional(bool, true)
+      }))
+    }))
+    master_ipv4_cidr_block = optional(string)
+    private_nodes          = optional(bool, true)
+  })
+  nullable = false
+  default  = {}
+  validation {
+    condition = (
+      try(var.access_config.ip_access.disable_public_endpoint, null) != true ||
+      var.access_config.private_nodes == true
+    )
+    error_message = "Private endpoint can only be enabled with private nodes."
+  }
+}
+
 variable "backup_configs" {
   description = "Configuration for Backup for GKE."
   type = object({
@@ -24,6 +52,7 @@ variable "backup_configs" {
       encryption_key                    = optional(string)
       include_secrets                   = optional(bool, true)
       include_volume_data               = optional(bool, true)
+      labels                            = optional(map(string))
       namespaces                        = optional(list(string))
       schedule                          = optional(string)
       retention_policy_days             = optional(number)
@@ -38,6 +67,7 @@ variable "backup_configs" {
 variable "cluster_autoscaling" {
   description = "Enable and configure limits for Node Auto-Provisioning with Cluster Autoscaler."
   type = object({
+    enabled             = optional(bool, true)
     autoscaling_profile = optional(string, "BALANCED")
     auto_provisioning_defaults = optional(object({
       boot_disk_kms_key = optional(string)
@@ -70,17 +100,18 @@ variable "cluster_autoscaling" {
       }))
       # add validation rule to ensure only one is present if upgrade settings is defined
     }))
+    auto_provisioning_locations = optional(list(string))
     cpu_limits = optional(object({
-      min = number
+      min = optional(number, 0)
       max = number
     }))
     mem_limits = optional(object({
-      min = number
+      min = optional(number, 0)
       max = number
     }))
-    gpu_resources = optional(list(object({
+    accelerator_resources = optional(list(object({
       resource_type = string
-      min           = number
+      min           = optional(number, 0)
       max           = number
     })))
   })
@@ -94,7 +125,8 @@ variable "cluster_autoscaling" {
   }
   validation {
     condition = (
-      var.cluster_autoscaling == null ? true : contains(
+      try(var.cluster_autoscaling, null) == null ||
+      try(var.cluster_autoscaling.auto_provisioning_defaults, null) == null ? true : contains(
         ["pd-standard", "pd-ssd", "pd-balanced"],
       var.cluster_autoscaling.auto_provisioning_defaults.disk_type)
     )
@@ -109,6 +141,24 @@ variable "cluster_autoscaling" {
       ) == 1
     )
     error_message = "Upgrade settings can only use blue/green or surge."
+  }
+}
+
+variable "default_nodepool" {
+  description = "Enable default nodepool."
+  type = object({
+    remove_pool        = optional(bool, true)
+    initial_node_count = optional(number, 1)
+  })
+  default  = {}
+  nullable = false
+  validation {
+    condition = (
+      var.default_nodepool.remove_pool != true
+      ||
+      var.default_nodepool.initial_node_count != null
+    )
+    error_message = "If `remove_pool` is set to false, `initial_node_count` needs to be set."
   }
 }
 
@@ -130,64 +180,71 @@ variable "enable_addons" {
   type = object({
     cloudrun                       = optional(bool, false)
     config_connector               = optional(bool, false)
-    dns_cache                      = optional(bool, false)
-    gce_persistent_disk_csi_driver = optional(bool, false)
-    gcp_filestore_csi_driver       = optional(bool, false)
-    gcs_fuse_csi_driver            = optional(bool, false)
-    horizontal_pod_autoscaling     = optional(bool, false)
-    http_load_balancing            = optional(bool, false)
+    dns_cache                      = optional(bool, true)
+    gce_persistent_disk_csi_driver = optional(bool, true)
+    gcp_filestore_csi_driver       = optional(bool, true)
+    gcs_fuse_csi_driver            = optional(bool, true)
+    horizontal_pod_autoscaling     = optional(bool, true)
+    http_load_balancing            = optional(bool, true)
     istio = optional(object({
       enable_tls = bool
     }))
     kalm           = optional(bool, false)
     network_policy = optional(bool, false)
+    stateful_ha    = optional(bool, false)
   })
-  default = {
-    horizontal_pod_autoscaling = true
-    http_load_balancing        = true
-  }
+  default  = {}
   nullable = false
 }
 
 variable "enable_features" {
   description = "Enable cluster-level features. Certain features allow configuration."
   type = object({
-    binary_authorization = optional(bool, false)
-    cost_management      = optional(bool, false)
+    beta_apis                         = optional(list(string))
+    binary_authorization              = optional(bool, false)
+    cilium_clusterwide_network_policy = optional(bool, false)
+    cost_management                   = optional(bool, true)
     dns = optional(object({
-      provider = optional(string)
-      scope    = optional(string)
-      domain   = optional(string)
+      additive_vpc_scope_dns_domain = optional(string)
+      provider                      = optional(string)
+      scope                         = optional(string)
+      domain                        = optional(string)
     }))
+    multi_networking = optional(bool, false)
     database_encryption = optional(object({
       state    = string
       key_name = string
     }))
-    dataplane_v2         = optional(bool, false)
-    fqdn_network_policy  = optional(bool, false)
-    gateway_api          = optional(bool, false)
-    groups_for_rbac      = optional(string)
-    image_streaming      = optional(bool, false)
-    intranode_visibility = optional(bool, false)
-    l4_ilb_subsetting    = optional(bool, false)
-    mesh_certificates    = optional(bool)
-    pod_security_policy  = optional(bool, false)
+    dataplane_v2          = optional(bool, true)
+    fqdn_network_policy   = optional(bool, true)
+    gateway_api           = optional(bool, false)
+    groups_for_rbac       = optional(string)
+    image_streaming       = optional(bool, false)
+    intranode_visibility  = optional(bool, false)
+    l4_ilb_subsetting     = optional(bool, false)
+    mesh_certificates     = optional(bool)
+    pod_security_policy   = optional(bool, false)
+    secret_manager_config = optional(bool)
+    security_posture_config = optional(object({
+      mode               = string
+      vulnerability_mode = string
+    }))
     resource_usage_export = optional(object({
       dataset                              = string
       enable_network_egress_metering       = optional(bool)
       enable_resource_consumption_metering = optional(bool)
     }))
-    shielded_nodes = optional(bool, false)
-    tpu            = optional(bool, false)
+    service_external_ips = optional(bool, true)
+    shielded_nodes       = optional(bool, false)
+    tpu                  = optional(bool, false)
     upgrade_notifications = optional(object({
       topic_id = optional(string)
     }))
     vertical_pod_autoscaling = optional(bool, false)
     workload_identity        = optional(bool, true)
+    enterprise_cluster       = optional(bool)
   })
-  default = {
-    workload_identity = true
-  }
+  default = {}
   validation {
     condition = (
       var.enable_features.fqdn_network_policy ? var.enable_features.dataplane_v2 : true
@@ -205,7 +262,8 @@ variable "issue_client_certificate" {
 variable "labels" {
   description = "Cluster resource labels."
   type        = map(string)
-  default     = null
+  default     = {}
+  nullable    = false
 }
 
 variable "location" {
@@ -273,12 +331,10 @@ variable "monitoring_config" {
   description = "Monitoring configuration. Google Cloud Managed Service for Prometheus is enabled by default."
   type = object({
     enable_system_metrics = optional(bool, true)
-
     # Control plane metrics
     enable_api_server_metrics         = optional(bool, false)
     enable_controller_manager_metrics = optional(bool, false)
     enable_scheduler_metrics          = optional(bool, false)
-
     # Kube state metrics
     enable_daemonset_metrics   = optional(bool, false)
     enable_deployment_metrics  = optional(bool, false)
@@ -286,9 +342,13 @@ variable "monitoring_config" {
     enable_pod_metrics         = optional(bool, false)
     enable_statefulset_metrics = optional(bool, false)
     enable_storage_metrics     = optional(bool, false)
-
+    enable_cadvisor_metrics    = optional(bool, false)
     # Google Cloud Managed Service for Prometheus
     enable_managed_prometheus = optional(bool, true)
+    advanced_datapath_observability = optional(object({
+      enable_metrics = bool
+      enable_relay   = bool
+    }))
   })
   default  = {}
   nullable = false
@@ -303,6 +363,7 @@ variable "monitoring_config" {
       var.monitoring_config.enable_pod_metrics,
       var.monitoring_config.enable_statefulset_metrics,
       var.monitoring_config.enable_storage_metrics,
+      var.monitoring_config.enable_cadvisor_metrics,
     ]) ? var.monitoring_config.enable_system_metrics : true
     error_message = "System metrics are the minimum required component for enabling metrics collection."
   }
@@ -314,6 +375,7 @@ variable "monitoring_config" {
       var.monitoring_config.enable_pod_metrics,
       var.monitoring_config.enable_statefulset_metrics,
       var.monitoring_config.enable_storage_metrics,
+      var.monitoring_config.enable_cadvisor_metrics,
     ]) ? var.monitoring_config.enable_managed_prometheus : true
     error_message = "Kube state metrics collection requires Google Cloud Managed Service for Prometheus to be enabled."
   }
@@ -327,11 +389,23 @@ variable "name" {
 variable "node_config" {
   description = "Node-level configuration."
   type = object({
-    boot_disk_kms_key = optional(string)
-    service_account   = optional(string)
-    tags              = optional(list(string))
+    boot_disk_kms_key             = optional(string)
+    k8s_labels                    = optional(map(string))
+    labels                        = optional(map(string))
+    service_account               = optional(string)
+    tags                          = optional(list(string))
+    workload_metadata_config_mode = optional(string)
+    kubelet_readonly_port_enabled = optional(bool, true)
   })
-  default = {}
+  default  = {}
+  nullable = false
+  validation {
+    condition = contains(
+      ["GCE_METADATA", "GKE_METADATA", "null"],
+      coalesce(var.node_config.workload_metadata_config_mode, "null")
+    )
+    error_message = "node_config.workload_metadata_config_mode must be GCE_METADATA or GKE_METADATA."
+  }
 }
 
 variable "node_locations" {
@@ -341,18 +415,21 @@ variable "node_locations" {
   nullable    = false
 }
 
-variable "private_cluster_config" {
-  description = "Private cluster configuration."
+variable "node_pool_auto_config" {
+  description = "Node pool configs that apply to auto-provisioned node pools in autopilot clusters and node auto-provisioning-enabled clusters."
   type = object({
-    enable_private_endpoint = optional(bool)
-    master_global_access    = optional(bool)
-    peering_config = optional(object({
-      export_routes = optional(bool)
-      import_routes = optional(bool)
-      project_id    = optional(string)
-    }))
+    cgroup_mode                   = optional(string)
+    kubelet_readonly_port_enabled = optional(bool, true)
+    network_tags                  = optional(list(string), [])
+    resource_manager_tags         = optional(map(string), {})
   })
-  default = null
+  default  = {}
+  nullable = false
+  validation {
+    condition = contains(["CGROUPMODE_UNSPECIFIED", "CGROUPMODE_V1", "CGROUPMODE_V2"],
+    coalesce(var.node_pool_auto_config.cgroup_mode, "CGROUPMODE_UNSPECIFIED"))
+    error_message = "node_pool_auto_config.cgroup_mode must be CGROUPMODE_UNSPECIFIED, CGROUPMODE_V1 or CGROUPMODE_V2"
+  }
 }
 
 variable "project_id" {
@@ -369,19 +446,19 @@ variable "release_channel" {
 variable "vpc_config" {
   description = "VPC-level configuration."
   type = object({
-    network                = string
-    subnetwork             = string
-    master_ipv4_cidr_block = optional(string)
+    disable_default_snat = optional(bool)
+    network              = string
+    subnetwork           = string
     secondary_range_blocks = optional(object({
       pods     = string
       services = string
     }))
     secondary_range_names = optional(object({
-      pods     = optional(string, "pods")
-      services = optional(string, "services")
+      pods     = optional(string)
+      services = optional(string)
     }))
-    master_authorized_ranges = optional(map(string))
-    stack_type               = optional(string)
+    additional_ranges = optional(list(string))
+    stack_type        = optional(string)
   })
   nullable = false
 }

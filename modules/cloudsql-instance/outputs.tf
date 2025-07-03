@@ -21,6 +21,12 @@ locals {
   )
 }
 
+output "client_certificates" {
+  description = "The CA Certificate used to connect to the SQL Instance via SSL."
+  value       = google_sql_ssl_cert.client_certificates
+  sensitive   = true
+}
+
 output "connection_name" {
   description = "Connection name of the primary instance."
   value       = google_sql_database_instance.primary.connection_name
@@ -49,7 +55,7 @@ output "dns_names" {
 
 output "id" {
   description = "Fully qualified primary instance id."
-  value       = google_sql_database_instance.primary.private_ip_address
+  value       = google_sql_database_instance.primary.id
 }
 
 output "ids" {
@@ -92,12 +98,6 @@ output "names" {
   }
 }
 
-output "postgres_client_certificates" {
-  description = "The CA Certificate used to connect to the SQL Instance via SSL."
-  value       = google_sql_ssl_cert.postgres_client_certificates
-  sensitive   = true
-}
-
 output "psc_service_attachment_link" {
   description = "The link to service attachment of PSC instance."
   value       = google_sql_database_instance.primary.psc_service_attachment_link
@@ -127,8 +127,10 @@ output "self_links" {
 output "user_passwords" {
   description = "Map of containing the password of all users created through terraform."
   value = {
-    for name, user in google_sql_user.users :
-    name => user.password
+    for k, v in local.users : k => v.password
   }
   sensitive = true
+  depends_on = [
+    google_sql_user.users
+  ]
 }

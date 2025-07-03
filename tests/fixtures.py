@@ -1,4 +1,4 @@
-# Copyright 2023 Google LLC
+# Copyright 2024 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,10 +34,9 @@ PlanSummary = collections.namedtuple('PlanSummary', 'values counts outputs')
 def _prepare_root_module(path):
   """Context manager to prepare a terraform module to be tested.
 
-  If the TFTEST_COPY environment variable is set, `path` is copied to
-  a temporary directory and a few terraform files (e.g.
-  terraform.tfvars) are deleted to ensure a clean test environment.
-  Otherwise, `path` is simply returned untouched.
+  `path` is copied to a temporary directory and a few terraform files
+  (e.g. terraform.tfvars) are deleted to ensure a clean test
+  environment.
   """
   # if we're copying the module, we might as well ignore files and
   # directories that are automatically read by terraform. Useful
@@ -50,35 +49,22 @@ def _prepare_root_module(path):
                                            '.terraform.lock.hcl',
                                            'terraform.tfvars', '.terraform')
 
-  if os.environ.get('TFTEST_COPY'):
-    # if the TFTEST_COPY is set, create temp dir and copy the root
-    # module there
-    with tempfile.TemporaryDirectory(dir=path.parent) as tmp_path:
-      tmp_path = Path(tmp_path)
+  with tempfile.TemporaryDirectory(dir=path.parent) as tmp_path:
+    tmp_path = Path(tmp_path)
 
-      # Running tests in a copy made with symlinks=True makes them run
-      # ~20% slower than when run in a copy made with symlinks=False.
-      shutil.copytree(path, tmp_path, dirs_exist_ok=True, symlinks=False,
-                      ignore=ignore_patterns)
-      lockfile = _REPO_ROOT / 'tools' / 'lockfile' / '.terraform.lock.hcl'
-      if lockfile.exists():
-        shutil.copy(lockfile, tmp_path / '.terraform.lock.hcl')
+    # Running tests in a copy made with symlinks=True makes them run
+    # ~20% slower than when run in a copy made with symlinks=False.
+    shutil.copytree(path, tmp_path, dirs_exist_ok=True, symlinks=False,
+                    ignore=ignore_patterns)
+    lockfile = _REPO_ROOT / 'tools' / 'lockfile' / '.terraform.lock.hcl'
+    if lockfile.exists():
+      shutil.copy(lockfile, tmp_path / '.terraform.lock.hcl')
 
-      yield tmp_path
-  else:
-    # check if any ignore_patterns files are present in path
-    if unwanted_files := ignore_patterns(path, os.listdir(path=path)):
-      # prevent shooting yourself in the foot (unexpected test results) when ignored files are present
-      raise RuntimeError(
-          f'Test in path {path} contains {", ".join(unwanted_files)} which may affect '
-          f'test results. Please run tests with TFTEST_COPY=1 environment variable'
-      )
-    # if TFTEST_COPY is not set, just return the same path
-    yield path
+    yield tmp_path
 
 
 def plan_summary(module_path, basedir, tf_var_files=None, extra_files=None,
-                 **tf_vars):
+                 extra_dirs=None, **tf_vars):
   """
   Run a Terraform plan on the module located at `module_path`.
 
@@ -89,6 +75,9 @@ def plan_summary(module_path, basedir, tf_var_files=None, extra_files=None,
     tf_var_files.
 
   - tf_var_files: set of terraform variable files (tfvars) to pass
+    in to terraform
+
+  - extra_files: set of extra files to optionally pass
     in to terraform
 
   Returns a PlanSummary object containing 3 attributes:
@@ -116,7 +105,12 @@ def plan_summary(module_path, basedir, tf_var_files=None, extra_files=None,
     extra_files = [(module_path / filename).resolve()
                    for x in extra_files or []
                    for filename in glob.glob(x, root_dir=module_path)]
+    extra_dirs = [
+        (module_path / dirname).resolve() for dirname in extra_dirs or []
+    ]
     tf.setup(extra_files=extra_files, upgrade=True)
+    for extra_dir in extra_dirs:
+      os.symlink(extra_dir, tf.tfdir / extra_dir.name)
     tf_var_files = [(basedir / x).resolve() for x in tf_var_files or []]
     plan = tf.plan(output=True, tf_var_file=tf_var_files, tf_vars=tf_vars)
 
@@ -127,12 +121,10 @@ def plan_summary(module_path, basedir, tf_var_files=None, extra_files=None,
     q = collections.deque([plan.root_module])
     while q:
       e = q.popleft()
-
       if 'type' in e:
         counts[e['type']] += 1
       if 'values' in e:
         values[e['address']] = e['values']
-
       for x in e.get('resources', []):
         counts['resources'] += 1
         q.append(x)
@@ -161,20 +153,21 @@ def plan_summary_fixture(request):
   """
 
   def inner(module_path, basedir=None, tf_var_files=None, extra_files=None,
-            **tf_vars):
+            extra_dirs=None, **tf_vars):
     if basedir is None:
       basedir = Path(request.fspath).parent
     return plan_summary(module_path=module_path, basedir=basedir,
                         tf_var_files=tf_var_files, extra_files=extra_files,
-                        **tf_vars)
+                        extra_dirs=extra_dirs, **tf_vars)
 
   return inner
 
 
 def plan_validator(module_path, inventory_paths, basedir, tf_var_files=None,
-                   extra_files=None, **tf_vars):
+                   extra_files=None, extra_dirs=None, **tf_vars):
   summary = plan_summary(module_path=module_path, tf_var_files=tf_var_files,
-                         extra_files=extra_files, basedir=basedir, **tf_vars)
+                         extra_files=extra_files, extra_dirs=extra_dirs,
+                         basedir=basedir, **tf_vars)
 
   # allow single single string for inventory_paths
   if not isinstance(inventory_paths, list):
@@ -198,21 +191,35 @@ def plan_validator(module_path, inventory_paths, basedir, tf_var_files=None,
     # - put the values coming from user's inventory the right
     #   side of any comparison operators.
     # - include a descriptive error message to the assert
+    # print(yaml.dump({'values': summary.values}))
+    # print("", yaml.dump({'counts': summary.counts}))
+    # print(yaml.dump({'outputs': summary.values}))
 
     if 'values' in inventory:
-      validate_plan_object(inventory['values'], summary.values, relative_path,
-                           "")
+      try:
+        validate_plan_object(inventory['values'], summary.values, relative_path,
+                             "")
+      except AssertionError:
+        print(f'\n{path}')
+        print(yaml.dump({'values': summary.values}))
+        raise
 
     if 'counts' in inventory:
       try:
         expected_counts = inventory['counts']
         for type_, expected_count in expected_counts.items():
-          assert type_ in summary.counts, \
-              f'{relative_path}: module does not create any resources of type `{type_}`'
-          plan_count = summary.counts[type_]
-          assert plan_count == expected_count, \
-              f'{relative_path}: count of {type_} resources failed. Got {plan_count}, expected {expected_count}'
+          # modules and resources always exists in summary
+          if expected_count == 0 and type_ not in ('modules', 'resources'):
+            assert type_ not in summary.counts, \
+              f'{relative_path}: module creates resources of type `{type_}` when expected not to create any'
+          else:
+            assert type_ in summary.counts, \
+                f'{relative_path}: module does not create any resources of type `{type_}`'
+            plan_count = summary.counts[type_]
+            assert plan_count == expected_count, \
+                f'{relative_path}: count of {type_} resources failed. Got {plan_count}, expected {expected_count}'
       except AssertionError:
+        print(f'\n{path}')
         print(yaml.dump({'counts': summary.counts}))
         raise
 
@@ -232,9 +239,9 @@ def plan_validator(module_path, inventory_paths, basedir, tf_var_files=None,
               f'{relative_path}: output {output_name} failed. Got `{plan_output}`, expected `{expected_output}`'
       except AssertionError:
         if _buffer:
+          print(f'\n{path}')
           print(yaml.dump(_buffer))
         raise
-
   return summary
 
 
@@ -254,10 +261,14 @@ def validate_plan_object(expected_value, plan_value, relative_path,
   # dictionaries / objects
   if isinstance(expected_value, dict) and isinstance(plan_value, dict):
     for k, v in expected_value.items():
-      assert k in plan_value, \
-        f'{relative_path}: {k} is not a valid address in the plan'
-      validate_plan_object(v, plan_value[k], relative_path,
-                           f'{relative_address}.{k}')
+      if v == "__missing__":
+        assert k not in plan_value, \
+          f'{relative_path}: {relative_address}.{k} was expected to be missing, but exists with value: {plan_value[k]}'
+      else:
+        assert k in plan_value, \
+          f'{relative_path}: {relative_address}.{k} is not a valid address in the plan'
+        validate_plan_object(v, plan_value[k], relative_path,
+                             f'{relative_address}.{k}')
 
   # lists
   elif isinstance(expected_value, list) and isinstance(plan_value, list):
@@ -296,10 +307,21 @@ def plan_validator_fixture(request):
 
 def get_tfvars_for_e2e():
   _variables = [
-      "billing_account", "group_email", "organization_id", "parent", "prefix",
-      "region"
+      'billing_account', 'group_email', 'organization_id', 'parent', 'prefix',
+      'region', 'region_secondary'
   ]
-  tf_vars = {k: os.environ.get(f"TFTEST_E2E_{k}") for k in _variables}
+  missing_vars = set([f'TFTEST_E2E_{k}' for k in _variables]) - set(
+      os.environ.keys())
+  if missing_vars:
+    raise RuntimeError(
+        f'Missing environment variables: {missing_vars} required to run E2E tests. '
+        f'Consult CONTRIBUTING.md to understand how to set them up. '
+        f'If you want to skip E2E tests add -k "not examples_e2e" to your pytest call'
+    )
+  tf_vars = {k: os.environ.get(f'TFTEST_E2E_{k}') for k in _variables}
+  if tf_vars['region'] == tf_vars['region_secondary']:
+    raise ValueError(
+        "E2E tests require distinct primary and secondary regions.")
   return tf_vars
 
 
@@ -375,7 +397,24 @@ def e2e_validator_fixture(request):
   return inner
 
 
-@pytest.fixture(scope='session', name='e2e_tfvars_path')
+@pytest.fixture(scope='session', name='e2e_tfvars_path_session')
+def e2e_tfvars_path_session():
+  """Session scoped fixture preparing end-to-end environment
+
+  Creates a GCP project for each thread. Tests reuse the same GCP project.
+  """
+  yield from e2e_tfvars_path()
+
+
+@pytest.fixture(scope='function', name='e2e_tfvars_path_function')
+def e2e_tfvars_path_function():
+  """Function scoped fixture preparing end-to-end environment
+
+  Creates a separate GCP project for each of E2E test run.
+  """
+  yield from e2e_tfvars_path()
+
+
 def e2e_tfvars_path():
   """Fixture preparing end-to-end test environment
 
@@ -385,7 +424,7 @@ def e2e_tfvars_path():
   Otherwise, create a unique test environment (in case of multiple workers - as many environments as
   there are workers), that will be injected into each example test instead of `tests/examples/variables.tf`.
 
-  Returns path to tfvars file that contains information about envrionment to use for the tests.
+  Returns path to tfvars file that contains information about environment to use for the tests.
   """
   if tfvars_path := os.environ.get('TFTEST_E2E_TFVARS_PATH'):
     # no need to set up the project

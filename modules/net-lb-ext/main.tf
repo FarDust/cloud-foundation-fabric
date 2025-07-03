@@ -20,22 +20,25 @@ locals {
   health_check = (
     var.health_check != null
     ? var.health_check
-    : google_compute_region_health_check.default.0.self_link
+    : google_compute_region_health_check.default[0].self_link
   )
 }
 
-resource "google_compute_forwarding_rule" "forwarding_rules" {
-  for_each = var.forwarding_rules_config
-  provider = google-beta
-  project  = var.project_id
-  region   = var.region
-  name = (
-    each.key == "" ? var.name : "${var.name}-${each.key}"
-  )
+moved {
+  from = google_compute_forwarding_rule.forwarding_rules
+  to   = google_compute_forwarding_rule.default
+}
+
+resource "google_compute_forwarding_rule" "default" {
+  for_each    = var.forwarding_rules_config
+  provider    = google-beta
+  project     = var.project_id
+  region      = var.region
+  name        = coalesce(each.value.name, each.key == "" ? var.name : "${var.name}-${each.key}")
   description = each.value.description
   ip_address  = each.value.address
   ip_protocol = each.value.protocol
-  ip_version  = each.value.ip_version
+  ip_version  = each.value.address != null ? null : each.value.ipv6 == true ? "IPV6" : "IPV4" # do not set if address is provided
   backend_service = (
     google_compute_region_backend_service.default.self_link
   )
@@ -51,7 +54,7 @@ resource "google_compute_region_backend_service" "default" {
   provider                        = google-beta
   project                         = var.project_id
   region                          = var.region
-  name                            = var.name
+  name                            = coalesce(var.backend_service_config.name, var.name)
   description                     = var.description
   load_balancing_scheme           = "EXTERNAL"
   protocol                        = var.backend_service_config.protocol

@@ -1,5 +1,5 @@
 /**
- * Copyright 2023 Google LLC
+ * Copyright 2024 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,6 +47,11 @@ locals {
       "https://www.googleapis.com/auth/userinfo.email"
     ]
   )
+  service_account_display_name = (
+    var.service_account.display_name != null
+    ? var.service_account.display_name
+    : "Terraform GKE ${var.cluster_name} ${var.name}."
+  )
   taints = merge(var.taints, !local.image.is_win ? {} : {
     "node.kubernetes.io/os" = {
       value  = "windows"
@@ -63,7 +68,7 @@ resource "google_service_account" "service_account" {
     ? split("@", var.service_account.email)[0]
     : "tf-gke-${var.name}"
   )
-  display_name = "Terraform GKE ${var.cluster_name} ${var.name}."
+  display_name = local.service_account_display_name
 }
 
 resource "google_container_node_pool" "nodepool" {
@@ -77,7 +82,6 @@ resource "google_container_node_pool" "nodepool" {
   initial_node_count = var.node_count.initial
   node_count         = var.node_count.current
   node_locations     = var.node_locations
-  # placement_policy   = var.nodepool_config.placement_policy
 
   dynamic "autoscaling" {
     for_each = (
@@ -112,12 +116,39 @@ resource "google_container_node_pool" "nodepool" {
   }
 
   dynamic "network_config" {
-    for_each = var.pod_range != null ? [""] : []
+    for_each = var.network_config != null ? [""] : []
     content {
-      create_pod_range     = var.pod_range.secondary_pod_range.create
-      enable_private_nodes = var.pod_range.secondary_pod_range.enable_private_nodes
-      pod_ipv4_cidr_block  = var.pod_range.secondary_pod_range.cidr
-      pod_range            = var.pod_range.secondary_pod_range.name
+      create_pod_range     = var.network_config.pod_range.create
+      enable_private_nodes = var.network_config.enable_private_nodes
+      pod_ipv4_cidr_block  = var.network_config.pod_range.cidr
+      pod_range            = var.network_config.pod_range.name
+      dynamic "additional_node_network_configs" {
+        for_each = try(var.network_config.additional_node_network_configs, [])
+        content {
+          network    = additional_node_network_configs.value.network
+          subnetwork = additional_node_network_configs.value.subnetwork
+        }
+      }
+      dynamic "additional_pod_network_configs" {
+        for_each = try(var.network_config.additional_pod_network_configs, [])
+        content {
+          subnetwork          = additional_pod_network_configs.value.subnetwork
+          secondary_pod_range = additional_pod_network_configs.value.secondary_pod_range
+          max_pods_per_node   = additional_pod_network_configs.value.max_pods_per_node
+        }
+      }
+      dynamic "network_performance_config" {
+        for_each = try(var.network_config.total_egress_bandwidth_tier, null) != null ? [""] : []
+        content {
+          total_egress_bandwidth_tier = var.network_config.total_egress_bandwidth_tier
+        }
+      }
+      dynamic "pod_cidr_overprovision_config" {
+        for_each = var.network_config.pod_cidr_overprovisioning_disabled ? [""] : []
+        content {
+          disabled = true
+        }
+      }
     }
   }
 
@@ -126,6 +157,37 @@ resource "google_container_node_pool" "nodepool" {
     content {
       max_surge       = try(var.nodepool_config.upgrade_settings.max_surge, null)
       max_unavailable = try(var.nodepool_config.upgrade_settings.max_unavailable, null)
+      strategy        = try(var.nodepool_config.upgrade_settings.strategy, null)
+      dynamic "blue_green_settings" {
+        for_each = try(var.nodepool_config.upgrade_settings.blue_green_settings, null) != null ? [""] : []
+        content {
+          node_pool_soak_duration = var.nodepool_config.upgrade_settings.blue_green_settings.node_pool_soak_duration
+          dynamic "standard_rollout_policy" {
+            for_each = try(var.nodepool_config.upgrade_settings.blue_green_settings.standard_rollout_policy, null) != null ? [""] : []
+            content {
+              batch_percentage    = var.nodepool_config.upgrade_settings.blue_green_settings.standard_rollout_policy.batch_percentage
+              batch_node_count    = var.nodepool_config.upgrade_settings.blue_green_settings.standard_rollout_policy.batch_node_count
+              batch_soak_duration = var.nodepool_config.upgrade_settings.blue_green_settings.standard_rollout_policy.batch_soak_duration
+            }
+          }
+        }
+      }
+    }
+  }
+
+  dynamic "placement_policy" {
+    for_each = try(var.nodepool_config.placement_policy, null) != null ? [""] : []
+    content {
+      type         = var.nodepool_config.placement_policy.type
+      policy_name  = var.nodepool_config.placement_policy.policy_name
+      tpu_topology = var.nodepool_config.placement_policy.tpu_topology
+    }
+  }
+
+  dynamic "queued_provisioning" {
+    for_each = try(var.nodepool_config.queued_provisioning, false) ? [""] : []
+    content {
+      enabled = var.nodepool_config.queued_provisioning
     }
   }
 
@@ -134,7 +196,8 @@ resource "google_container_node_pool" "nodepool" {
     disk_size_gb      = var.node_config.disk_size_gb
     disk_type         = var.node_config.disk_type
     image_type        = var.node_config.image_type
-    labels            = var.labels
+    labels            = var.k8s_labels
+    resource_labels   = var.labels
     local_ssd_count   = var.node_config.local_ssd_count
     machine_type      = var.node_config.machine_type
     metadata          = local.node_metadata

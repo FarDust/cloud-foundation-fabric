@@ -28,7 +28,7 @@
 #
 set -e
 
-DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && cd .. && pwd)
 DEST=$1
 INFRA="${DEST}/infra"
 TIMESTAMP=$(date +%s)
@@ -38,22 +38,23 @@ mkdir -p "${DEST}" "${INFRA}"
 ln -sfT "${DIR}" "${DEST}/fabric"
 
 SETUP_MODULE="${DIR}/tests/examples_e2e/setup_module"
-cp "${SETUP_MODULE}/main.tf" "${SETUP_MODULE}/variables.tf" "${SETUP_MODULE}/e2e_tests.tfvars.tftpl" "${INFRA}"
+cp "${SETUP_MODULE}"/* "${INFRA}"
 
 cp "${DIR}/tests/examples/variables.tf" "${DEST}"
 
-if [ ! -f "${INFRA}/randomizer.auto.tfvars" ] ; then
-  echo "suffix=0" > "${INFRA}/randomizer.auto.tfvars"
-  echo "timestamp=${TIMESTAMP}" >> "${INFRA}/randomizer.auto.tfvars"
+if [ ! -f "${INFRA}/randomizer.auto.tfvars" ]; then
+	echo "suffix=0" >"${INFRA}/randomizer.auto.tfvars"
+	echo "timestamp=${TIMESTAMP}" >>"${INFRA}/randomizer.auto.tfvars"
 fi
 
 # TODO correct environment variable prefix
-export | sed -e 's/^declare -x //' | grep '^TFTEST_E2E_' | sed -e 's/^TFTEST_E2E_//' > "${INFRA}/terraform.tfvars"
+export | sed -e 's/^declare -x //' | grep '^TFTEST_E2E_' | sed -e 's/^TFTEST_E2E_//' >"${INFRA}/terraform.tfvars"
 (
-  cd "${INFRA}"
-  terraform init
-  terraform apply -auto-approve
-  ln -sfT "${INFRA}/e2e_tests.tfvars" "${DEST}/e2e_tests.auto.tfvars"
+	cd "${INFRA}"
+	terraform init
+	terraform apply -auto-approve
+	ln -sfT "${INFRA}/e2e_tests.tfvars" "${DEST}/e2e_tests.auto.tfvars"
+	echo "prefix=$(grep timestamp "${INFRA}/randomizer.auto.tfvars" | cut -d '=' -f2)" >"${DEST}/prefix.auto.tfvars"
 )
 
-tocuh "${DEST}/main.tf"
+touch "${DEST}/main.tf"

@@ -1,4 +1,4 @@
-# Copyright 2023 Google LLC
+# Copyright 2024 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ module "land-project" {
   source          = "../../../modules/project"
   parent          = var.project_config.parent
   billing_account = var.project_config.billing_account_id
-  project_create  = var.project_config.billing_account_id != null
+  project_reuse   = var.project_config.billing_account_id != null ? null : {}
   prefix = (
     var.project_config.billing_account_id == null ? null : var.prefix
   )
@@ -67,14 +67,15 @@ module "land-project" {
     "cloudresourcemanager.googleapis.com",
     "datalineage.googleapis.com",
     "iam.googleapis.com",
+    "logging.googleapis.com",
+    "monitoring.googleapis.com",
     "serviceusage.googleapis.com",
-    "stackdriver.googleapis.com",
-    "storage.googleapis.com",
     "storage-component.googleapis.com",
+    "storage.googleapis.com",
   ]
   service_encryption_key_ids = {
-    bq      = [var.service_encryption_keys.bq]
-    storage = [var.service_encryption_keys.storage]
+    "bigquery.googleapis.com" = compact([var.service_encryption_keys.bq])
+    "storage.googleapis.com"  = compact([var.service_encryption_keys.storage])
   }
 }
 

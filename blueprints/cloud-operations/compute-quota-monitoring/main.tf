@@ -29,7 +29,7 @@ module "project" {
   name            = var.project_id
   billing_account = try(var.project_create_config.billing_account, null)
   parent          = try(var.project_create_config.parent, null)
-  project_create  = var.project_create_config != null
+  project_reuse   = var.project_create_config != null ? null : {}
   services = [
     "cloudasset.googleapis.com",
     "cloudbuild.googleapis.com",
@@ -60,8 +60,10 @@ module "cf" {
     location = var.region
   }
   bundle_config = {
-    source_dir  = "${path.module}/src"
-    output_path = var.bundle_path
+    path = "${path.module}/src"
+    folder_options = {
+      archive_path = var.bundle_path
+    }
   }
   service_account_create = true
   trigger_config = {

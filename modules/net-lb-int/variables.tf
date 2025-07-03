@@ -30,6 +30,7 @@ variable "backend_service_config" {
       ratio                     = optional(number)
     }))
     log_sample_rate  = optional(number)
+    name             = optional(string)
     protocol         = optional(string, "UNSPECIFIED")
     session_affinity = optional(string)
     timeout_sec      = optional(number)
@@ -71,7 +72,8 @@ variable "forwarding_rules_config" {
     address       = optional(string)
     description   = optional(string)
     global_access = optional(bool, true)
-    ip_version    = optional(string)
+    ipv6          = optional(bool, false)
+    name          = optional(string)
     ports         = optional(list(string), null)
     protocol      = optional(string, "TCP")
   }))
@@ -93,7 +95,7 @@ variable "group_configs" {
 }
 
 variable "health_check" {
-  description = "Name of existing health check to use, disables auto-created health check."
+  description = "Name of existing health check to use, disables auto-created health check. Also set `health_check_config = null` when cross-referencing an health check from another load balancer module to avoid a Terraform error."
   type        = string
   default     = null
 }
@@ -105,6 +107,7 @@ variable "health_check_config" {
     description         = optional(string, "Terraform managed.")
     enable_logging      = optional(bool, false)
     healthy_threshold   = optional(number)
+    name                = optional(string)
     timeout_sec         = optional(number)
     unhealthy_threshold = optional(number)
     grpc = optional(object({
@@ -191,15 +194,24 @@ variable "project_id" {
   type        = string
 }
 
-variable "protocol" {
-  description = "Forwarding rule protocol used, defaults to TCP."
-  type        = string
-  default     = "TCP"
-}
-
 variable "region" {
   description = "GCP region."
   type        = string
+}
+
+variable "service_attachments" {
+  description = "PSC service attachments, keyed by forwarding rule."
+  type = map(object({
+    nat_subnets           = list(string)
+    automatic_connection  = optional(bool, false)
+    consumer_accept_lists = optional(map(string), {})
+    consumer_reject_lists = optional(list(string))
+    description           = optional(string)
+    domain_name           = optional(string)
+    enable_proxy_protocol = optional(bool, false)
+    reconcile_connections = optional(bool)
+  }))
+  default = null
 }
 
 variable "service_label" {

@@ -1,4 +1,4 @@
-# Copyright 2023 Google LLC
+# Copyright 2024 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,9 +13,17 @@
 # limitations under the License.
 """Pytest configuration for testing code examples."""
 
-from ..examples.conftest import pytest_generate_tests as _examples_generate_test
+from ..examples.conftest import \
+    pytest_generate_tests as _examples_generate_test
 
 
 def pytest_generate_tests(metafunc):
   """Find all README.md files and collect code examples tagged for testing."""
-  _examples_generate_test(metafunc, "examples_e2e", lambda x: 'e2e' in x)
+  match metafunc.function.__name__.lower():
+  # split examples by isolated tag. Those tagged with `isolated` test with `test_isolated_examples`
+    case "test_example":
+      _examples_generate_test(metafunc, "examples_e2e", lambda x:
+                              ('e2e' in x and 'isolated' not in x))
+    case "test_isolated_example":
+      _examples_generate_test(metafunc, "examples_e2e", lambda x:
+                              ('e2e' in x and 'isolated' in x))

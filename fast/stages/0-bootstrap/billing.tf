@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Google LLC
+ * Copyright 2025 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,8 @@
 locals {
   # used here for convenience, in organization.tf members are explicit
   billing_ext_admins = [
-    local.groups_iam.gcp-billing-admins,
-    local.groups_iam.gcp-organization-admins,
+    local.principals.gcp-billing-admins,
+    local.principals.gcp-organization-admins,
     module.automation-tf-bootstrap-sa.iam_email,
     module.automation-tf-resman-sa.iam_email
   ]
@@ -38,14 +38,22 @@ locals {
 # billing account in same org (IAM is in the organization.tf file)
 
 module "billing-export-project" {
-  source          = "../../../modules/project"
-  count           = local.billing_mode == "org" ? 1 : 0
+  source = "../../../modules/project"
+  count = (
+    local.billing_mode == "org" || var.billing_account.force_create.project == true ? 1 : 0
+  )
   billing_account = var.billing_account.id
-  name            = "billing-exp-0"
+  name            = var.resource_names["project-billing"]
   parent = coalesce(
     var.project_parent_ids.billing, "organizations/${var.organization.id}"
   )
-  prefix = local.prefix
+  prefix   = var.prefix
+  universe = var.universe
+  contacts = (
+    var.bootstrap_user != null || var.essential_contacts == null
+    ? {}
+    : { (var.essential_contacts) = ["ALL"] }
+  )
   iam = {
     "roles/owner"  = [module.automation-tf-bootstrap-sa.iam_email]
     "roles/viewer" = [module.automation-tf-bootstrap-r-sa.iam_email]
@@ -61,12 +69,14 @@ module "billing-export-project" {
 }
 
 module "billing-export-dataset" {
-  source        = "../../../modules/bigquery-dataset"
-  count         = local.billing_mode == "org" ? 1 : 0
-  project_id    = module.billing-export-project.0.project_id
-  id            = "billing_export"
+  source = "../../../modules/bigquery-dataset"
+  count = (
+    local.billing_mode == "org" || var.billing_account.force_create.dataset == true ? 1 : 0
+  )
+  project_id    = module.billing-export-project[0].project_id
+  id            = var.resource_names["bq-billing"]
   friendly_name = "Billing export."
-  location      = var.locations.bq
+  location      = local.locations.bq
 }
 
 # standalone billing account

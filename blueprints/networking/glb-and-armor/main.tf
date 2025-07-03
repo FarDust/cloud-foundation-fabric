@@ -33,7 +33,7 @@ module "project" {
   services = [
     "compute.googleapis.com"
   ]
-  project_create = var.project_create != null
+  project_reuse = var.project_create != null ? null : {}
 }
 
 
@@ -95,7 +95,7 @@ module "instance_template_ew1" {
   metadata = {
     startup-script-url = "gs://cloud-training/gcpnet/httplb/startup.sh"
   }
-  create_template = true
+  create_template = {}
   tags = [
     "http-server"
   ]
@@ -113,7 +113,7 @@ module "instance_template_ue1" {
   metadata = {
     startup-script-url = "gs://cloud-training/gcpnet/httplb/startup.sh"
   }
-  create_template = true
+  create_template = {}
   tags = [
     "http-server"
   ]

@@ -1,5 +1,5 @@
 /**
- * Copyright 2023 Google LLC
+ * Copyright 2024 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,6 +47,12 @@ variable "description" {
   default     = "Terraform-managed registry"
 }
 
+variable "enable_vulnerability_scanning" {
+  description = "Whether vulnerability scanning should be enabled in the repository."
+  type        = bool
+  default     = null
+}
+
 variable "encryption_key" {
   description = "The KMS key name to use for encryption at rest."
   type        = string
@@ -56,34 +62,145 @@ variable "encryption_key" {
 variable "format" {
   description = "Repository format."
   type = object({
-    apt = optional(object({}))
+    apt = optional(object({
+      remote = optional(object({
+        # custom_repository = optional(string) # still not available in provider
+        public_repository = string # "BASE path"
+
+        disable_upstream_validation = optional(bool)
+        upstream_credentials = optional(object({
+          username                = string
+          password_secret_version = string
+        }))
+      }))
+      standard = optional(bool)
+    }))
     docker = optional(object({
-      immutable_tags = optional(bool)
+      remote = optional(object({
+        public_repository = optional(string)
+        common_repository = optional(string)
+        custom_repository = optional(string)
+
+        disable_upstream_validation = optional(bool)
+        upstream_credentials = optional(object({
+          username                = string
+          password_secret_version = string
+        }))
+      }))
+      standard = optional(object({
+        immutable_tags = optional(bool)
+      }))
+      virtual = optional(map(object({
+        repository = string
+        priority   = number
+      })))
     }))
-    kfp = optional(object({}))
-    go  = optional(object({}))
+    kfp = optional(object({
+      standard = optional(bool)
+    }))
+    generic = optional(object({
+      standard = optional(bool)
+    }))
+    go = optional(object({
+      standard = optional(bool)
+    }))
+    googet = optional(object({
+      standard = optional(bool)
+    }))
     maven = optional(object({
-      allow_snapshot_overwrites = optional(bool)
-      version_policy            = optional(string)
+      remote = optional(object({
+        public_repository = optional(string)
+        custom_repository = optional(string)
+
+        disable_upstream_validation = optional(bool)
+        upstream_credentials = optional(object({
+          username                = string
+          password_secret_version = string
+        }))
+      }))
+      standard = optional(object({
+        allow_snapshot_overwrites = optional(bool)
+        version_policy            = optional(string)
+      }))
+      virtual = optional(map(object({
+        repository = string
+        priority   = number
+      })))
     }))
-    npm    = optional(object({}))
-    python = optional(object({}))
-    yum    = optional(object({}))
+    npm = optional(object({
+      remote = optional(object({
+        public_repository = optional(string)
+        custom_repository = optional(string)
+
+        disable_upstream_validation = optional(bool)
+        upstream_credentials = optional(object({
+          username                = string
+          password_secret_version = string
+        }))
+      }))
+      standard = optional(bool)
+      virtual = optional(map(object({
+        repository = string
+        priority   = number
+      })))
+    }))
+    python = optional(object({
+      remote = optional(object({
+        public_repository = optional(string)
+        custom_repository = optional(string)
+
+        disable_upstream_validation = optional(bool)
+        upstream_credentials = optional(object({
+          username                = string
+          password_secret_version = string
+        }))
+      }))
+      standard = optional(bool)
+      virtual = optional(map(object({
+        repository = string
+        priority   = number
+      })))
+    }))
+    yum = optional(object({
+      remote = optional(object({
+        # custom_repository = optional(string) # still not available in provider
+        public_repository = string # "BASE path"
+
+        disable_upstream_validation = optional(bool)
+        upstream_credentials = optional(object({
+          username                = string
+          password_secret_version = string
+        }))
+      }))
+      standard = optional(bool)
+    }))
   })
   nullable = false
-  default  = { docker = {} }
   validation {
     condition = (
       length([for k, v in var.format : k if v != null]) == 1
     )
     error_message = "Multiple or zero formats are not supported."
   }
-}
-
-variable "iam" {
-  description = "IAM bindings in {ROLE => [MEMBERS]} format."
-  type        = map(list(string))
-  default     = {}
+  validation {
+    condition = alltrue([
+      for k, v in var.format :
+      length([for kk, vv in v : k if vv != null]) == 1
+      if v != null
+    ])
+    error_message = "Repository can only be one of standard, remote or virtual."
+  }
+  validation {
+    condition = alltrue([
+      for k, v in var.format : (
+        (try(v.remote.public_repository, null) == null ? 0 : 1) +
+        (try(v.remote.custom_repository, null) == null ? 0 : 1) +
+        (try(v.remote.common_repository, null) == null ? 0 : 1)
+      ) == 1
+      if try(v.remote, null) != null
+    ])
+    error_message = "Remote repositories must specify exactly one of public_repository, custom_repository and common_repository."
+  }
 }
 
 variable "labels" {
@@ -95,26 +212,6 @@ variable "labels" {
 variable "location" {
   description = "Registry location. Use `gcloud beta artifacts locations list' to get valid values."
   type        = string
-}
-
-variable "mode" {
-  description = "Repository mode."
-  type = object({
-    standard = optional(bool)
-    remote   = optional(bool)
-    virtual = optional(map(object({
-      repository = string
-      priority   = number
-    })))
-  })
-  nullable = false
-  default  = { standard = true }
-  validation {
-    condition = (
-      length([for k, v in var.mode : k if v != null && v != false]) == 1
-    )
-    error_message = "Multiple or zero modes are not supported."
-  }
 }
 
 variable "name" {

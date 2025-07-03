@@ -18,25 +18,39 @@
 locals {
   bs_conntrack = var.backend_service_config.connection_tracking
   bs_failover  = var.backend_service_config.failover_config
+  forwarding_rule_names = {
+    for k, v in var.forwarding_rules_config :
+    k => k == "" ? var.name : "${var.name}-${k}"
+  }
   health_check = (
     var.health_check != null
     ? var.health_check
-    : google_compute_health_check.default.0.self_link
+    : google_compute_health_check.default[0].self_link
   )
+  _service_attachments = (
+    var.service_attachments == null ? {} : var.service_attachments
+  )
+  service_attachments = {
+    for k, v in local._service_attachments :
+    k => v if lookup(var.forwarding_rules_config, k, null) != null
+  }
 }
 
-resource "google_compute_forwarding_rule" "forwarding_rules" {
-  for_each = var.forwarding_rules_config
-  provider = google-beta
-  project  = var.project_id
-  name = (
-    each.key == "" ? var.name : "${var.name}-${each.key}"
-  )
+moved {
+  from = google_compute_forwarding_rule.forwarding_rules
+  to   = google_compute_forwarding_rule.default
+}
+
+resource "google_compute_forwarding_rule" "default" {
+  for_each    = var.forwarding_rules_config
+  provider    = google-beta
+  project     = var.project_id
+  name        = coalesce(each.value.name, local.forwarding_rule_names[each.key])
   region      = var.region
   description = each.value.description
   ip_address  = each.value.address
   ip_protocol = each.value.protocol
-  ip_version  = each.value.ip_version
+  ip_version  = each.value.address != null ? null : each.value.ipv6 == true ? "IPV6" : "IPV4" # do not set if address is provided
   backend_service = (
     google_compute_region_backend_service.default.self_link
   )
@@ -55,7 +69,7 @@ resource "google_compute_region_backend_service" "default" {
   provider                        = google-beta
   project                         = var.project_id
   region                          = var.region
-  name                            = var.name
+  name                            = coalesce(var.backend_service_config.name, var.name)
   description                     = var.description
   load_balancing_scheme           = "INTERNAL"
   protocol                        = var.backend_service_config.protocol
@@ -65,13 +79,18 @@ resource "google_compute_region_backend_service" "default" {
   session_affinity                = var.backend_service_config.session_affinity
   timeout_sec                     = var.backend_service_config.timeout_sec
 
+  iap { enabled = false }
+
   dynamic "backend" {
     for_each = { for b in var.backends : b.group => b }
     content {
       balancing_mode = "CONNECTION"
       description    = backend.value.description
       failover       = backend.value.failover
-      group          = backend.key
+      group = try(
+        google_compute_instance_group.default[backend.key].id,
+        backend.key
+      )
     }
   }
 
@@ -112,4 +131,31 @@ resource "google_compute_region_backend_service" "default" {
     }
   }
 
+}
+
+resource "google_compute_service_attachment" "default" {
+  for_each       = local.service_attachments
+  project        = var.project_id
+  region         = var.region
+  name           = local.forwarding_rule_names[each.key]
+  description    = var.description
+  target_service = google_compute_forwarding_rule.default[each.key].id
+  nat_subnets    = each.value.nat_subnets
+  connection_preference = (
+    each.value.automatic_connection ? "ACCEPT_AUTOMATIC" : "ACCEPT_MANUAL"
+  )
+  consumer_reject_lists = each.value.consumer_reject_lists
+  domain_names = (
+    each.value.domain_name == null ? null : [each.value.domain_name]
+  )
+  enable_proxy_protocol = each.value.enable_proxy_protocol
+  reconcile_connections = each.value.reconcile_connections
+  dynamic "consumer_accept_lists" {
+    for_each = each.value.consumer_accept_lists
+    iterator = accept
+    content {
+      project_id_or_num = accept.key
+      connection_limit  = accept.value
+    }
+  }
 }

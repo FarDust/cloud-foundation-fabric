@@ -1,5 +1,5 @@
 /**
- * Copyright 2023 Google LLC
+ * Copyright 2025 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,67 +14,50 @@
  * limitations under the License.
  */
 
-# tfdoc:file:description Organization policies.
+# tfdoc:file:description Organization-level IAM and org policies.
 
 locals {
-  tags = {
-    for k, v in var.tags : k => merge(v, {
-      values = {
-        for vk, vv in v.values : vk => merge(vv, {
-          iam = {
-            for rk, rv in vv.iam : rk => [
-              for rm in rv : (
-                contains(keys(local.service_accounts), rm)
-                ? "serviceAccount:${local.service_accounts[rm]}"
-                : rm
-              )
-            ]
-          }
-        })
-      }
-    })
-  }
+  # combine org-level IAM additive from billing and stage 2s
+  iam_bindings_additive = merge(
+    merge([
+      for k, v in local.stage2 :
+      v.organization_config.iam_bindings_additive
+    ]...),
+    local.billing_mode != "org" ? {} : local.billing_iam
+  )
 }
 
 module "organization" {
   source          = "../../../modules/organization"
+  count           = var.root_node == null ? 1 : 0
   organization_id = "organizations/${var.organization.id}"
-  # additive bindings via delegated IAM grant set in stage 0
-  iam_bindings_additive = local.iam_bindings_additive
+  # additive bindings leveraging the delegated IAM grant set in stage 0
+  iam_bindings_additive = {
+    for k, v in local.iam_bindings_additive : k => {
+      role      = lookup(var.custom_roles, v.role, v.role)
+      member    = lookup(local.principals_iam, v.member, v.member)
+      condition = lookup(v, "condition", null)
+    }
+  }
+  factories_config = {
+    tags = var.factories_config.tags
+    context = {
+      tag_keys   = var.factories_config.context.tag_keys
+      tag_values = var.factories_config.context.tag_values
+    }
+  }
   # do not assign tagViewer or tagUser roles here on tag keys and values as
   # they are managed authoritatively and will break multitenant stages
   tags = merge(local.tags, {
     (var.tag_names.context) = {
-      description = "Resource management context."
-      iam         = {}
-      values = {
-        data       = {}
-        gke        = {}
-        networking = {}
-        sandbox    = {}
-        security   = {}
-        teams      = {}
-        tenant     = {}
-      }
-    }
+      description = try(local.tags[var.tag_names.context].description, "Resource management context.")
+      iam         = try(local.tags[var.tag_names.context].iam, {})
+      values      = local.context_tag_values
+    },
     (var.tag_names.environment) = {
-      description = "Environment definition."
-      iam         = {}
-      values = {
-        development = {}
-        production  = {}
-      }
-    }
-    (var.tag_names.tenant) = {
-      description = "Organization tenant."
-      values = {
-        for k, v in var.tenants : k => {
-          description = v.descriptive_name
-          iam = {
-            "roles/resourcemanager.tagViewer" = local.tenant_iam[k]
-          }
-        }
-      }
+      description = try(local.tags[var.tag_names.environment].description, "Environment definition.")
+      iam         = try(local.tags[var.tag_names.environment].iam, {})
+      values      = local.environment_tag_values
     }
   })
 }

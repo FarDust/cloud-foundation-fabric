@@ -1,5 +1,5 @@
 /**
- * Copyright 2023 Google LLC
+ * Copyright 2024 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,6 +65,13 @@ variable "connector_enforcement" {
   default     = null
 }
 
+variable "data_cache" {
+  description = "Enable data cache. Only used for Enterprise MYSQL and PostgreSQL."
+  type        = bool
+  nullable    = false
+  default     = false
+}
+
 variable "database_version" {
   description = "Database type and version to create."
   type        = string
@@ -74,20 +81,6 @@ variable "databases" {
   description = "Databases to create once the primary instance is created."
   type        = list(string)
   default     = null
-}
-
-variable "deletion_protection" {
-  description = "Prevent terraform from deleting instances."
-  type        = bool
-  default     = true
-  nullable    = false
-}
-
-variable "deletion_protection_enabled" {
-  description = "Set Google's deletion protection attribute which applies across all surfaces (UI, API, & Terraform)."
-  type        = bool
-  default     = true
-  nullable    = false
 }
 
 variable "disk_autoresize_limit" {
@@ -126,6 +119,13 @@ variable "flags" {
   default     = null
 }
 
+variable "gcp_deletion_protection" {
+  description = "Set Google's deletion protection attribute which applies across all surfaces (UI, API, & Terraform)."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "insights_config" {
   description = "Query Insights configuration. Defaults to null which disables Query Insights."
   type = object({
@@ -160,7 +160,7 @@ variable "maintenance_config" {
   default = {}
   validation {
     condition = (
-      var.maintenance_config.maintenance_window == null ? true : (
+      try(var.maintenance_config.maintenance_window, null) == null ? true : (
         # Maintenance window day validation below
         var.maintenance_config.maintenance_window.day >= 1 &&
         var.maintenance_config.maintenance_window.day <= 7 &&
@@ -168,7 +168,7 @@ variable "maintenance_config" {
         var.maintenance_config.maintenance_window.hour >= 0 &&
         var.maintenance_config.maintenance_window.hour <= 23 &&
         # Maintenance window update_track validation below
-        var.maintenance_config.maintenance_window.update_track == null ? true :
+        try(var.maintenance_config.maintenance_window.update_track, null) == null ? true :
         contains(["canary", "stable"], var.maintenance_config.maintenance_window.update_track)
       )
     )
@@ -185,7 +185,6 @@ variable "network_config" {
   description = "Network configuration for the instance. Only one between private_network and psc_config can be used."
   type = object({
     authorized_networks = optional(map(string))
-    require_ssl         = optional(bool)
     connectivity = object({
       public_ipv4 = optional(bool, false)
       psa_config = optional(object({
@@ -195,7 +194,8 @@ variable "network_config" {
           replica = optional(string)
         }))
       }))
-      psc_allowed_consumer_projects = optional(list(string))
+      psc_allowed_consumer_projects    = optional(list(string))
+      enable_private_path_for_services = optional(bool, false)
     })
   })
   validation {
@@ -204,10 +204,18 @@ variable "network_config" {
   }
 }
 
-variable "postgres_client_certificates" {
-  description = "Map of cert keys connect to the application(s) using public IP."
-  type        = list(string)
-  default     = null
+variable "password_validation_policy" {
+  description = "Password validation policy configuration for instances."
+  type = object({
+    enabled = optional(bool, true)
+    # change interval is only supported for postgresql
+    change_interval             = optional(number)
+    default_complexity          = optional(bool)
+    disallow_username_substring = optional(bool)
+    min_length                  = optional(number)
+    reuse_interval              = optional(number)
+  })
+  default = null
 }
 
 variable "prefix" {
@@ -234,15 +242,46 @@ variable "replicas" {
   description = "Map of NAME=> {REGION, KMS_KEY} for additional read replicas. Set to null to disable replica creation."
   type = map(object({
     region              = string
-    encryption_key_name = string
+    encryption_key_name = optional(string)
   }))
-  default = {}
+  default  = {}
+  nullable = false
 }
 
 variable "root_password" {
-  description = "Root password of the Cloud SQL instance. Required for MS SQL Server."
-  type        = string
-  default     = null
+  description = "Root password of the Cloud SQL instance, or flag to create a random password. Required for MS SQL Server."
+  type = object({
+    password        = optional(string)
+    random_password = optional(bool, false)
+  })
+  default  = {}
+  nullable = false
+  validation {
+    condition     = !(var.root_password.password != null && var.root_password.random_password)
+    error_message = "Cannot provide root_password.password and root_password.random_password at the same time"
+  }
+}
+
+variable "ssl" {
+  description = "Setting to enable SSL, set config and certificates."
+  type = object({
+    client_certificates = optional(list(string))
+    # More details @ https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/sql_database_instance#ssl_mode
+    mode = optional(string)
+  })
+  default  = {}
+  nullable = false
+  validation {
+    condition     = var.ssl.mode == null || var.ssl.mode == "ALLOW_UNENCRYPTED_AND_ENCRYPTED" || var.ssl.mode == "ENCRYPTED_ONLY" || var.ssl.mode == "TRUSTED_CLIENT_CERTIFICATE_REQUIRED"
+    error_message = "The variable mode can be ALLOW_UNENCRYPTED_AND_ENCRYPTED, ENCRYPTED_ONLY for all, or TRUSTED_CLIENT_CERTIFICATE_REQUIRED for PostgreSQL or MySQL."
+  }
+}
+
+variable "terraform_deletion_protection" {
+  description = "Prevent terraform from deleting instances."
+  type        = bool
+  default     = true
+  nullable    = false
 }
 
 variable "tier" {
@@ -250,11 +289,19 @@ variable "tier" {
   type        = string
 }
 
+variable "time_zone" {
+  description = "The time_zone to be used by the database engine (supported only for SQL Server), in SQL Server timezone format."
+  type        = string
+  default     = null
+}
+
 variable "users" {
   description = "Map of users to create in the primary instance (and replicated to other replicas). For MySQL, anything after the first `@` (if present) will be used as the user's host. Set PASSWORD to null if you want to get an autogenerated password. The user types available are: 'BUILT_IN', 'CLOUD_IAM_USER' or 'CLOUD_IAM_SERVICE_ACCOUNT'."
   type = map(object({
-    password = optional(string)
-    type     = optional(string)
+    password         = optional(string)
+    password_version = optional(number)
+    type             = optional(string, "BUILT_IN")
   }))
-  default = null
+  default  = {}
+  nullable = false
 }

@@ -164,7 +164,6 @@ variable "project_id" {
 variable "region" {
   description = "Region used for all resources."
   type        = string
-  default     = "europe-west1"
 }
 
 variable "revision_annotations" {
@@ -204,6 +203,13 @@ variable "startup_cpu_boost" {
   description = "Enable startup cpu boost."
   type        = bool
   default     = false
+}
+
+variable "tag_bindings" {
+  description = "Tag bindings for this service, in key => tag value id format."
+  type        = map(string)
+  nullable    = false
+  default     = {}
 }
 
 variable "timeout_seconds" {
