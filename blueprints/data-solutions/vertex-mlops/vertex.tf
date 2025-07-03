@@ -41,7 +41,7 @@ module "service-account-notebook" {
 
 resource "google_notebooks_runtime" "runtime" {
   for_each = { for k, v in var.notebooks : k => v if v.type == "MANAGED" }
-  name     = "${var.prefix}-${each.key}"
+  name     = var.prefix == null ? "${each.key}" : "${var.prefix}-${each.key}"
   project  = module.project.project_id
   location = var.region
   access_config {
@@ -82,7 +82,7 @@ resource "google_notebooks_runtime" "runtime" {
 resource "google_workbench_instance" "playground" {
   for_each = { for k, v in var.notebooks : k => v if v.type == "USER_MANAGED" }
   project  = module.project.project_id
-  name     = "${var.prefix}-${each.key}"
+  name     = var.prefix == null ? "${each.key}" : "${var.prefix}-${each.key}"
   location = "${var.region}-b"
 
   gce_setup {

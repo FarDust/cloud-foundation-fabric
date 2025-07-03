@@ -49,7 +49,7 @@ module "artifact_registry" {
 
 module "service-account-github" {
   source     = "../../../modules/iam-service-account"
-  name       = "${var.prefix}-sa-github"
+  name       = local.github_sa
   project_id = module.project.project_id
   iam        = var.identity_pool_claims == null ? {} : { "roles/iam.workloadIdentityUser" = ["principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_pool[0].name}/${var.identity_pool_claims}"] }
 }
